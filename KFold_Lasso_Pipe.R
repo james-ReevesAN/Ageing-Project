@@ -125,22 +125,36 @@ roc_obj <- roc(true_labels, predictions)
 auc_value <- auc(roc_obj)
 cat("LOOCV AUC:", round(auc_value, 3), "\n")
 
-# Extract non-zero coefficients (excluding intercept)
-coef_matrix <- coef(final_model)
-non_zero_coefs <- coef_matrix[which(coef_matrix != 0), ]
-non_zero_genes <- rownames(coef_matrix)[which(coef_matrix != 0)]
 
-# Drop intercept
-non_zero_genes <- non_zero_genes[-1]
-non_zero_coefs <- non_zero_coefs[-1]
+# Combine coefficients from all folds into one data frame
+coef_df <- do.call(rbind, lapply(seq_along(selected_coef_list), function(i) {
+  coef_vec <- selected_coef_list[[i]]
+  genes <- selected_gene_list[[i]]
+  
+  # Make sure lengths match (and drop intercept if present)
+  keep_idx <- genes != "(Intercept)"
+  genes <- genes[keep_idx]
+  coefs <- as.numeric(coef_vec[keep_idx])
+  
+  if (length(genes) == 0) return(NULL)
+  
+  data.frame(
+    Gene = genes,
+    Coefficient = coefs,
+    Fold = i,
+    stringsAsFactors = FALSE
+  )
+}))
 
-# Create a data frame of gene importance
-gene_importance <- data.frame(
-  Gene = non_zero_genes,
-  Coefficient = as.numeric(non_zero_coefs)
-)
-
-
+# Summarise across folds
+gene_importance <- coef_df %>%
+  group_by(Gene) %>%
+  summarise(
+    Coefficient = mean(Coefficient, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(abs(Coefficient)))
+gene_importance <- as.data.frame(gene_importance)
 
 # Rank by absolute coefficient
 gene_importance <- gene_importance %>%
@@ -150,8 +164,11 @@ gene_importance <- gene_importance %>%
 gene_Str <- gene_importance[,1]
 
 # Get coefficients from final model (excluding intercept)
-coef_vector <- coef(final_model)[-1, ]  # Remove intercept
-gene_names_model <- rownames(coef(final_model))[-1]
+coef_vector <-  setNames(
+  gene_importance$Coefficient,
+  gene_importance$Gene
+)
+gene_names_model <- gene_importance$Gene
 
 # Keep only genes with non-zero coefficients
 selected_genes <- gene_names_model[coef_vector != 0]
